@@ -61,7 +61,7 @@ terraform -chdir=terraform/google-cloud apply \
    -var="gcp_credentials=$(pwd)/<service_account_key_file>.json"
 ```
 
-Once resources are up, you can now set up required server software e.g., [PHP](https://www.php.net/) etc.
+You can now set up required server software e.g., [PHP](https://www.php.net/) etc.
 
 ```shell
 ansible-playbook -i inventory.ini -u root ansible/setup.yml
