@@ -4,7 +4,9 @@
 Using these scripts, you can even deploy multiple [Laravel](https://laravel.com/) projects on the same server, if desired.
 
 This project contains [Terraform](https://www.terraform.io/) modules for [DigitalOcean](https://www.digitalocean.com/) and [Google Cloud Platform](https://console.cloud.google.com/).
-Depending on your cloud platform on your choice, you can use either of those available providers.
+Depending on the cloud platform of your choice, you can use either of those available providers.
+
+It configures and manages deployment of a [Laravel](https://laravel.com/) project (with [Nginx](https://www.nginx.com/), [PHP-FPM](https://www.php.net/manual/en/install.fpm.php) 7 or 8, [MySQL](https://www.mysql.com/), [Redis](https://redis.io/), job queue backed by [Supervisor](http://supervisord.org/), task scheduler etc.) on an [Ubuntu](https://ubuntu.com/) VPS with one command.
 
 ## Prepare
 
