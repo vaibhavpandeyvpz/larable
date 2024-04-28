@@ -1,0 +1,5 @@
+node:
+  version: "20"
+php:
+  version: "8.3"
+user: sites

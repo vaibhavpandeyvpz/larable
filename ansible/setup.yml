@@ -1,0 +1,181 @@
+---
+- name: Setup web server
+  hosts: server
+  tasks:
+    - name: Include Terraform variables
+      include_vars:
+        file: ../setup.yml
+
+    - name: Ping hosts
+      ping:
+
+    - name: Install Nginx
+      apt:
+        name: nginx
+
+    - name: Create a new user
+      user:
+        name: "{{ user }}"
+        generate_ssh_key: yes
+        ssh_key_bits: 2048
+        ssh_key_file: .ssh/id_rsa
+        groups: www-data
+        append: yes
+        shell: /bin/bash
+      register: created_user
+
+    - name: Replace Nginx user
+      replace:
+        path: /etc/nginx/nginx.conf
+        regexp: "^user www-data;"
+        replace: user {{ user }};
+
+    - name: Increase max upload size
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: "^client_max_body_size"
+        insertafter: http {
+        line: client_max_body_size 100m;
+
+    - name: Restart Nginx service
+      systemd_service:
+        name: nginx
+        state: restarted
+        enabled: yes
+
+    - name: Install Ondřej Surý"s PPA
+      apt_repository:
+        repo: "ppa:ondrej/php"
+
+    - name: Install PHP {{ php.version }} package(s)
+      apt:
+        pkg:
+          - php{{ php.version }}-fpm
+          - php{{ php.version }}-bcmath
+          - php{{ php.version }}-curl
+          - php{{ php.version }}-gd
+          - php{{ php.version }}-mbstring
+          - php{{ php.version }}-mysql
+          - php{{ php.version }}-redis
+          - php{{ php.version }}-xml
+          - php{{ php.version }}-zip
+
+    - name: Create FPM pool config
+      copy:
+        dest: /etc/php/{{ php.version }}/fpm/pool.d/{{ user }}.conf
+        mode: "0644"
+        content: |
+          [{{ user }}]
+          user = {{ user }}
+          group = {{ user }}
+          listen = /run/php/php{{ php.version }}-fpm-{{ user }}.sock
+          listen.owner = www-data
+          listen.group = www-data
+          pm = dynamic
+          pm.max_children = 5
+          pm.start_servers = 2
+          pm.min_spare_servers = 1
+          pm.max_spare_servers = 3
+          php_admin_value[post_max_size] = 100M
+          php_admin_value[upload_max_filesize] = 100M
+
+    - name: Restart PHP-FPM service
+      systemd_service:
+        name: php{{ php.version }}-fpm
+        state: restarted
+        enabled: yes
+
+    - name: Restart FPM w/o sudo
+      lineinfile:
+        path: /etc/sudoers
+        state: present
+        regexp: "^{{ user }} ALL="
+        line: "{{ user }} ALL=NOPASSWD: /bin/systemctl reload php{{ php.version }}-fpm"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: Download Composer installer
+      get_url:
+        url: https://getcomposer.org/installer
+        dest: /usr/src/composer-setup.php
+
+    - name: Download Composer
+      command:
+        cmd: php{{ php.version }} composer-setup.php
+        chdir: /usr/src
+
+    - name: Install Composer
+      copy:
+        remote_src: yes
+        src: /usr/src/composer.phar
+        dest: /usr/local/bin/composer
+        mode: "0755"
+
+    - name: Install MySQL client
+      apt:
+        pkg:
+          - mysql-client
+
+    - name: Install Supervisord
+      apt:
+        name: supervisor
+
+    - name: Install Certbot
+      apt:
+        name: python3-certbot-nginx
+
+    - name: Setup cron for Certbot
+      cron:
+        name: Certbot auto-renew
+        minute: "0"
+        hour: "12"
+        job: /usr/bin/certbot renew --quiet
+
+    - name: Install Node.js repo
+      shell: curl -fsSL https://deb.nodesource.com/setup_{{ node.version }}.x | bash -
+
+    - name: Install Node.js
+      apt:
+        name: nodejs
+
+    - name: Install Yarn
+      npm:
+        name: yarn
+        global: yes
+
+    - name: Deny incoming traffic via firewall
+      community.general.ufw:
+        default: deny
+        direction: incoming
+
+    - name: Permit outgoing traffic via firewall
+      community.general.ufw:
+        default: allow
+        direction: outgoing
+
+    - name: Enable HTTP and SSH via firewall
+      community.general.ufw:
+        rule: allow
+        name: "{{ item }}"
+      loop:
+        - Nginx Full
+        - OpenSSH
+
+    - name: Enable (UFW) firewall
+      community.general.ufw:
+        state: enabled
+
+    - name: Install pip
+      apt:
+        name: "{{ item }}"
+      with_items:
+        - default-libmysqlclient-dev
+        - pip
+        - pkg-config
+
+    - name: Install mysqlclient via pip
+      pip:
+        name: mysqlclient
+
+    - name: Display SSH key
+      debug:
+        msg: "ssh_key_fingerprint={{ created_user.ssh_public_key }}"

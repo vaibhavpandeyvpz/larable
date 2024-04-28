@@ -1,0 +1,302 @@
+---
+- name: Setup website
+  hosts: server
+  tasks:
+    - name: Include Terraform outputs
+      include_vars:
+        file: ../outputs.yml
+
+    - name: Include setup variables
+      include_vars:
+        file: ../setup.yml
+
+    - name: Ping hosts
+      ping:
+
+    - name: Clone source code
+      git:
+        repo: "{{ repository }}"
+        accept_hostkey: yes
+        dest: /home/{{ user }}/{{ domain }}
+        single_branch: yes
+        version: "{{ branch }}"
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Install Composer deps
+      community.general.composer:
+        command: install
+        working_dir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Generate MySQL username & password
+      ansible.builtin.set_fact:
+        database_name: "{{ lookup('ansible.builtin.password', '/dev/null', length=10, chars=['ascii_lowercase']) }}"
+        database_user: "{{ lookup('ansible.builtin.password', '/dev/null', length=10, chars=['ascii_lowercase']) }}"
+        database_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=10, chars=['ascii_lowercase', 'digits']) }}"
+
+    - name: Create MySQL database
+      community.mysql.mysql_db:
+        login_host: "{{ db.host }}"
+        login_port: "{{ db.port }}"
+        login_user: "{{ db.user }}"
+        login_password: "{{ db.password }}"
+        name: "{{ database_user }}"
+
+    - name: Create MySQL user
+      community.mysql.mysql_user:
+        login_host: "{{ db.host }}"
+        login_port: "{{ db.port }}"
+        login_user: "{{ db.user }}"
+        login_password: "{{ db.password }}"
+        name: "{{ database_user }}"
+        password: "{{ database_password }}"
+        host: "%"
+        priv: "{{ database_name }}.*:ALL"
+
+    - name: Create .env file
+      copy:
+        remote_src: yes
+        src: /home/{{ user }}/{{ domain }}/.env.example
+        dest: /home/{{ user }}/{{ domain }}/.env
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Replace APP_ENV in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^APP_ENV=.*$"
+        replace: APP_ENV={{ env }}
+
+    - name: Disable APP_DEBUG in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^APP_DEBUG=.*$"
+        replace: APP_DEBUG=false
+
+    - name: Replace APP_URL in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^APP_URL=.*$"
+        replace: APP_URL=https://{{ domain }}
+
+    - name: Generate app key
+      command: php{{ php.version }} artisan key:generate --force
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Create Nginx vhost config
+      copy:
+        dest: /etc/nginx/sites-available/{{ domain }}
+        mode: "0644"
+        content: |
+          server {
+            listen 80;
+            listen [::]:80;
+
+            root /home/{{ user }}/{{ domain }}/public;
+
+            index index.php;
+
+            server_name {{ domain }};
+
+            location / {
+              try_files $uri $uri/ /index.php?$query_string;
+            }
+
+            location ~ \.php$ {
+              include snippets/fastcgi-php.conf;
+              fastcgi_pass unix:/run/php/php{{ php.version }}-fpm-{{ user }}.sock;
+            }
+          }
+
+    - name: Enable vhost config
+      file:
+        src: /etc/nginx/sites-available/{{ domain }}
+        dest: /etc/nginx/sites-enabled/{{ domain }}
+        state: link
+
+    - name: Restart Nginx service
+      systemd_service:
+        name: nginx
+        state: restarted
+
+    - name: Replace DB_CONNECTION in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^DB_CONNECTION=.*$"
+        replace: DB_CONNECTION=mysql
+
+    - name: Replace DB_HOST in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^(#\\s)?DB_HOST=.*$"
+        replace: DB_HOST={{ db.host }}
+
+    - name: Replace DB_PORT in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^(#\\s)?DB_PORT=.*$"
+        replace: DB_PORT={{ db.port }}
+
+    - name: Replace DB_DATABASE in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^(#\\s)?DB_DATABASE=.*$"
+        replace: DB_DATABASE={{ database_name }}
+
+    - name: Replace DB_USERNAME in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^(#\\s)?DB_USERNAME=.*$"
+        replace: DB_USERNAME={{ database_user }}
+
+    - name: Replace DB_PASSWORD in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^(#\\s)?DB_PASSWORD=.*$"
+        replace: DB_PASSWORD="{{ database_password }}"
+
+    - name: Replace CACHE_DRIVER in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^CACHE_DRIVER=.*$"
+        replace: CACHE_DRIVER=redis
+
+    - name: Replace CACHE_STORE in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^CACHE_STORE=.*$"
+        replace: CACHE_STORE=redis
+
+    - name: Replace QUEUE_CONNECTION in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^QUEUE_CONNECTION=.*$"
+        replace: QUEUE_CONNECTION=redis
+
+    - name: Replace REDIS_HOST in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^REDIS_HOST=.*$"
+        replace: REDIS_HOST={{ redis.host }}
+
+    - name: Replace REDIS_PORT in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^REDIS_PORT=.*$"
+        replace: REDIS_PORT={{ redis.port }}
+
+    - name: Replace REDIS_PASSWORD in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^REDIS_PASSWORD=.*$"
+        replace: REDIS_PASSWORD={{ redis.password }}
+
+    - name: Replace SESSION_DRIVER in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^SESSION_DRIVER=.*$"
+        replace: SESSION_DRIVER=redis
+
+    - name: Replace AWS_ACCESS_KEY_ID in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^AWS_ACCESS_KEY_ID=.*$"
+        replace: AWS_ACCESS_KEY_ID={{ s3.access_key_id }}
+
+    - name: Replace AWS_SECRET_ACCESS_KEY in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^AWS_SECRET_ACCESS_KEY=.*$"
+        replace: AWS_SECRET_ACCESS_KEY={{ s3.secret_access_key }}
+
+    - name: Replace AWS_DEFAULT_REGION in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^AWS_DEFAULT_REGION=.*$"
+        replace: AWS_DEFAULT_REGION={{ s3.region }}
+
+    - name: Replace AWS_BUCKET in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^AWS_BUCKET=.*$"
+        replace: AWS_BUCKET={{ s3.bucket }}
+
+    - name: Include AWS_ENDPOINT in .env
+      lineinfile:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^AWS_ENDPOINT"
+        insertafter: AWS_BUCKET=
+        line: "AWS_ENDPOINT={{ s3.endpoint }}"
+
+    - name: Replace AWS_USE_PATH_STYLE_ENDPOINT in .env
+      replace:
+        path: /home/{{ user }}/{{ domain }}/.env
+        regexp: "^AWS_USE_PATH_STYLE_ENDPOINT=.*$"
+        replace: AWS_USE_PATH_STYLE_ENDPOINT=true
+
+    - name: Optimize for performance
+      command: php{{ php.version }} artisan optimize
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Run database migrations
+      command: php{{ php.version }} artisan migrate --force
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Create Supervisor worker config
+      copy:
+        dest: /etc/supervisor/conf.d/{{ domain }}.conf
+        mode: "0644"
+        content: |
+          [program:{{ domain }}]
+          process_name=%(program_name)s_%(process_num)02d
+          command=php{{ php.version }} /home/{{ user }}/{{ domain }}/artisan queue:work --sleep=3 --tries=3
+          autostart=true
+          autorestart=true
+          user={{ user }}
+          redirect_stderr=true
+          stdout_logfile=/home/{{ user }}/worker-{{ domain }}.log
+          stopwaitsecs=3600
+
+    - name: Read Supervisor config changes
+      command: supervisorctl reread
+
+    - name: Update Supervisor process
+      command: supervisorctl update
+
+    - name: Restart Supervisor worker
+      command: supervisorctl restart all
+
+    - name: Setup cron for Laravel
+      cron:
+        name: Laravel task scheduler
+        user: "{{ user }}"
+        job: cd /home/{{ user }}/{{ domain }} && php{{ php.version }} artisan schedule:run >> /dev/null 2>&1
+
+    - name: Install Node.js dependencies
+      command: yarn install
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Build frontend assets
+      command: yarn build
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Install SSL certificate
+      command: certbot --non-interactive --agree-tos -m {{ admin }} --nginx --redirect -d {{ domain }}
+      ignore_errors: yes

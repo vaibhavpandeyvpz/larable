@@ -1,0 +1,67 @@
+---
+- name: Update website
+  hosts: server
+  tasks:
+    - name: Ping hosts
+      ping:
+
+    - name: Include server variables
+      include_vars:
+        file: ../setup.yml
+
+    - name: Pull latest source code
+      git:
+        repo: "{{ repository }}"
+        accept_hostkey: yes
+        dest: /home/{{ user }}/{{ domain }}
+        single_branch: yes
+        version: "{{ branch }}"
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Install Composer deps
+      community.general.composer:
+        command: install
+        working_dir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Optimize for performance
+      command: php{{ php.version }} artisan optimize
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Restart PHP-FPM service
+      systemd_service:
+        name: php{{ php.version }}-fpm
+        state: restarted
+
+    - name: Run database migrations
+      command: php{{ php.version }} artisan migrate --force
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Restart queue worker
+      command: php{{ php.version }} artisan queue:restart
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Install Node.js dependencies
+      command: yarn install
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
+
+    - name: Build frontend assets
+      command: yarn build
+      args:
+        chdir: /home/{{ user }}/{{ domain }}
+      become: yes
+      become_user: "{{ user }}"
